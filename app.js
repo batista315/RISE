@@ -1121,27 +1121,130 @@ async function dataUrlToFile(dataUrl) {
 	);
 }
 
-async function loadClipboardTextUrl(rawText) {
-	const text = rawText.trim();
-
-	if (!text) {
-		return false;
+function extractClipboardUrls(rawText) {
+	if (typeof rawText !== "string") {
+		return [];
 	}
 
-	try {
-		const parsedUrl = new URL(text);
+	const decodedText = rawText
+		.replace(/\u0000/g, "")
+		.replace(/&amp;/gi, "&")
+		.replace(/&#38;/gi, "&")
+		.trim();
+
+	if (!decodedText) {
+		return [];
+	}
+
+	const candidates = [];
+
+	/*
+	 * text/uri-list is line based. Lines beginning with # are comments.
+	 * Safari may include more than one URI or append ordinary text.
+	 */
+	for (const rawLine of decodedText.split(/\r?\n/)) {
+		const line = rawLine.trim();
+
+		if (!line || line.startsWith("#")) {
+			continue;
+		}
+
+		candidates.push(line);
+	}
+
+	/*
+	 * Also extract URLs embedded in prose, HTML fragments, or multiple-value
+	 * clipboard strings.
+	 */
+	for (
+		const match of
+			decodedText.matchAll(/https?:\/\/[^\s<>"'`]+/gi)
+	) {
+		candidates.push(match[0]);
+	}
+
+	const uniqueUrls = new Map();
+
+	for (const rawCandidate of candidates) {
+		const cleanedCandidate = rawCandidate
+			.trim()
+			.replace(/^[("'[\]{}]+/, "")
+			.replace(/[)"'\]}>.,;:!?]+$/, "");
+
+		let parsedUrl;
+
+		try {
+			parsedUrl = new URL(cleanedCandidate);
+		} catch {
+			continue;
+		}
 
 		if (
 			parsedUrl.protocol !== "http:" &&
 			parsedUrl.protocol !== "https:"
 		) {
-			return false;
+			continue;
 		}
 
-		return await loadImageUrl(parsedUrl.href);
-	} catch {
-		return false;
+		parsedUrl.hash = "";
+
+		const href = parsedUrl.href;
+
+		if (!uniqueUrls.has(href)) {
+			uniqueUrls.set(href, {
+				href,
+				score:
+					/\.(?:avif|bmp|gif|hei[cf]|jpe?g|png|tiff?|webp)(?:$|[?#])/i.test(
+						href,
+					)
+						? 100
+						: /(?:image|img|photo|media|cdn)/i.test(
+								parsedUrl.hostname +
+									parsedUrl.pathname,
+							)
+							? 20
+							: 0,
+			});
+		}
 	}
+
+	return [...uniqueUrls.values()]
+		.sort((left, right) => right.score - left.score)
+		.map((candidate) => candidate.href);
+}
+
+async function loadClipboardTextUrl(rawText) {
+	const candidateUrls =
+		extractClipboardUrls(rawText);
+
+	if (candidateUrls.length === 0) {
+		return {
+			handled: false,
+			loaded: false,
+		};
+	}
+
+	for (const candidateUrl of candidateUrls) {
+		const loaded =
+			await loadImageUrl(candidateUrl);
+
+		if (loaded) {
+			return {
+				handled: true,
+				loaded: true,
+			};
+		}
+	}
+
+	/*
+	 * A real URL was found and sent to the Worker. Preserve the Worker/import
+	 * error already shown by loadImageUrl() instead of replacing it with a
+	 * misleading clipboard-format error.
+	 */
+	return {
+		handled: true,
+		loaded: false,
+	};
 }
 
 async function pasteImageFromClipboard() {
@@ -1267,9 +1370,10 @@ async function pasteImageFromClipboard() {
 	}
 
 	async function loadPastedSource(rawSource) {
-		const source = rawSource
-			?.trim()
-			.replace(/^["']+|["']+$/g, "");
+		const source =
+			typeof rawSource === "string"
+				? rawSource.trim()
+				: "";
 
 		if (!source) {
 			return false;
@@ -1289,12 +1393,20 @@ async function pasteImageFromClipboard() {
 			}
 		}
 
-		if (/^https?:\/\//i.test(source)) {
-			if (!completePaste()) {
-				return true;
+		const result =
+			await loadClipboardTextUrl(source);
+
+		if (result.handled) {
+			if (!completed) {
+				completePaste();
 			}
 
-			return await loadImageUrl(source);
+			/*
+			 * true means the clipboard payload was recognized. If the
+			 * Worker rejected a candidate URL, loadImageUrl() has already
+			 * displayed the accurate reason.
+			 */
+			return true;
 		}
 
 		return false;
@@ -1619,12 +1731,38 @@ async function pasteImageFromClipboard() {
 			return;
 		}
 
+		/*
+		 * Some iOS Safari versions advertise text/uri-list and text/plain
+		 * but do not expose their values consistently through
+		 * ClipboardItem.getType(). readText() often returns the actual URI.
+		 */
+		if (
+			typeof navigator.clipboard.readText ===
+				"function"
+		) {
+			try {
+				const fallbackText =
+					await navigator.clipboard.readText();
+
+				if (
+					fallbackText &&
+					await loadPastedSource(
+						fallbackText,
+					)
+				) {
+					return;
+				}
+			} catch {
+				// Continue to the detailed error below.
+			}
+		}
+
 		const formats =
 			[...observedTypes].join(", ") ||
 			"none reported";
 
 		setStatus(
-			`Safari granted paste access but exposed no usable image data (${formats}).`,
+			`Safari exposed ${formats}, but no valid image URL could be extracted.`,
 			"error",
 		);
 
@@ -1740,8 +1878,8 @@ function handlePastedData(event) {
 		event.preventDefault();
 
 		void loadClipboardTextUrl(plainText)
-			.then((loaded) => {
-				if (!loaded) {
+			.then((result) => {
+				if (!result.handled) {
 					setStatus(
 						"The pasted content was not an image or image URL.",
 						"error",
