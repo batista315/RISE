@@ -1016,65 +1016,299 @@ async function pasteImageFromClipboard() {
 		return;
 	}
 
+	const imageMimeTypes = [
+		"image/png",
+		"image/jpeg",
+		"image/webp",
+		"image/gif",
+		"image/avif",
+		"image/heic",
+		"image/heif",
+		"image/bmp",
+		"image/tiff",
+	];
+
+	const observedTypes = new Set();
+
+	function fileFromBlob(blob, typeHint = "") {
+		const mimeType = (
+			blob.type ||
+			typeHint ||
+			"image/png"
+		)
+			.split(";")[0]
+			.trim()
+			.toLowerCase();
+
+		const extension =
+			SUPPORTED_IMAGE_TYPES.get(mimeType) ||
+			"png";
+
+		return new File(
+			[blob],
+			`pasted-image.${extension}`,
+			{
+				type: mimeType,
+				lastModified: Date.now(),
+			},
+		);
+	}
+
+	async function loadImageBlob(blob, typeHint = "") {
+		const mimeType = (
+			blob.type ||
+			typeHint
+		)
+			.split(";")[0]
+			.trim()
+			.toLowerCase();
+
+		if (
+			!blob.size ||
+			!mimeType.startsWith("image/")
+		) {
+			return false;
+		}
+
+		await loadLocalImage(
+			fileFromBlob(blob, mimeType),
+		);
+
+		return true;
+	}
+
+	async function loadImageSource(rawSource) {
+		const source = rawSource
+			?.trim()
+			.replace(/^["']+|["']+$/g, "");
+
+		if (!source) {
+			return false;
+		}
+
+		if (source.startsWith("data:image/")) {
+			await loadLocalImage(
+				await dataUrlToFile(source),
+			);
+			return true;
+		}
+
+		if (source.startsWith("blob:")) {
+			try {
+				const response = await fetch(source);
+				const blob = await response.blob();
+
+				if (await loadImageBlob(blob)) {
+					return true;
+				}
+			} catch {
+				return false;
+			}
+
+			return false;
+		}
+
+		if (/^https?:\/\//i.test(source)) {
+			loadImageUrl(source);
+			return true;
+		}
+
+		return false;
+	}
+
+	async function loadHtmlClipboard(html) {
+		if (!html?.trim()) {
+			return false;
+		}
+
+		const parsedDocument =
+			new DOMParser().parseFromString(
+				html,
+				"text/html",
+			);
+
+		const sources = [
+			...parsedDocument.querySelectorAll(
+				"img[src], source[src], source[srcset]",
+			),
+		]
+			.flatMap((element) => {
+				const values = [];
+
+				const src = element.getAttribute("src");
+
+				if (src) {
+					values.push(src);
+				}
+
+				const srcset =
+					element.getAttribute("srcset");
+
+				if (srcset) {
+					values.push(
+						...srcset
+							.split(",")
+							.map((candidate) =>
+								candidate
+									.trim()
+									.split(/\s+/)[0],
+							),
+					);
+				}
+
+				return values;
+			});
+
+		for (const source of sources) {
+			if (await loadImageSource(source)) {
+				return true;
+			}
+		}
+
+		const plainText =
+			parsedDocument.body?.textContent?.trim();
+
+		return loadImageSource(plainText);
+	}
+
 	try {
 		/*
-		 * This call is made directly from the Paste Image button click.
-		 * Safari displays its small native â€œPasteâ€ bubble; RISE does not
-		 * create any dialog, overlay, or editable paste box.
+		 * Safari displays its small native Paste bubble for this
+		 * user-initiated clipboard read.
 		 */
 		const clipboardItems =
 			await navigator.clipboard.read();
 
 		for (const clipboardItem of clipboardItems) {
-			const imageType =
-				clipboardItem.types.find(
-					(type) => type.startsWith("image/"),
-				);
+			const itemTypes =
+				Array.from(clipboardItem.types || []);
 
-			if (imageType) {
-				const blob =
-					await clipboardItem.getType(imageType);
-
-				const extension =
-					SUPPORTED_IMAGE_TYPES.get(imageType) ||
-					"png";
-
-				const pastedFile = new File(
-					[blob],
-					`pasted-image.${extension}`,
-					{
-						type: imageType,
-						lastModified: Date.now(),
-					},
-				);
-
-				await loadLocalImage(pastedFile);
-				return;
+			for (const type of itemTypes) {
+				observedTypes.add(type);
 			}
 
-			const textType =
-				clipboardItem.types.find(
-					(type) =>
-						type === "text/uri-list" ||
-						type === "text/plain",
-				);
+			/*
+			 * First use any image type Safari explicitly reports.
+			 */
+			for (const type of itemTypes) {
+				if (!type.startsWith("image/")) {
+					continue;
+				}
 
-			if (textType) {
-				const blob =
-					await clipboardItem.getType(textType);
+				try {
+					const blob =
+						await clipboardItem.getType(type);
 
-				if (
-					await loadClipboardTextUrl(
-						await blob.text(),
-					)
-				) {
-					return;
+					if (
+						await loadImageBlob(blob, type)
+					) {
+						return;
+					}
+				} catch {
+					// Try the remaining clipboard formats.
+				}
+			}
+
+			/*
+			 * Some Safari clipboard payloads do not list the image type
+			 * consistently, so probe the common image formats directly.
+			 */
+			for (const type of imageMimeTypes) {
+				if (itemTypes.includes(type)) {
+					continue;
+				}
+
+				try {
+					const blob =
+						await clipboardItem.getType(type);
+
+					if (
+						await loadImageBlob(blob, type)
+					) {
+						return;
+					}
+				} catch {
+					// This image type was not present.
+				}
+			}
+
+			/*
+			 * Long-pressing Copy Image in Safari can expose HTML containing
+			 * an <img> instead of exposing an image blob.
+			 */
+			if (itemTypes.includes("text/html")) {
+				try {
+					const htmlBlob =
+						await clipboardItem.getType(
+							"text/html",
+						);
+
+					if (
+						await loadHtmlClipboard(
+							await htmlBlob.text(),
+						)
+					) {
+						return;
+					}
+				} catch {
+					// Continue through URI and plain-text formats.
+				}
+			}
+
+			for (const type of [
+				"text/uri-list",
+				"text/plain",
+			]) {
+				if (!itemTypes.includes(type)) {
+					continue;
+				}
+
+				try {
+					const textBlob =
+						await clipboardItem.getType(type);
+
+					const text =
+						(await textBlob.text()).trim();
+
+					if (await loadImageSource(text)) {
+						return;
+					}
+
+					if (
+						text.includes("<img") &&
+						await loadHtmlClipboard(text)
+					) {
+						return;
+					}
+				} catch {
+					// Continue through remaining clipboard entries.
+				}
+			}
+
+			/*
+			 * Last pass: Safari may expose a generic blob whose own MIME
+			 * type is more useful than ClipboardItem.types.
+			 */
+			for (const type of itemTypes) {
+				try {
+					const blob =
+						await clipboardItem.getType(type);
+
+					if (await loadImageBlob(blob, type)) {
+						return;
+					}
+				} catch {
+					// Nothing usable in this entry.
 				}
 			}
 		}
 
+		const formats =
+			[...observedTypes].join(", ") ||
+			"none reported";
+
 		setStatus(
-			"The clipboard did not contain an image or image URL.",
+			`Safari returned clipboard formats RISE could not read: ${formats}`,
 			"error",
 		);
 	} catch (error) {
