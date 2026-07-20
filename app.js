@@ -1016,48 +1016,84 @@ async function pasteImageFromClipboard() {
 		return;
 	}
 
-	const imageMimeTypes = [
-		"image/png",
-		"image/jpeg",
-		"image/webp",
-		"image/gif",
-		"image/avif",
-		"image/heic",
-		"image/heif",
-		"image/bmp",
-		"image/tiff",
-	];
+	const pasteButtonRect =
+		elements.pasteImageButton.getBoundingClientRect();
 
-	const observedTypes = new Set();
+	const pasteCatcher = document.createElement("div");
 
-	function fileFromBlob(blob, typeHint = "") {
-		const mimeType = (
-			blob.type ||
-			typeHint ||
-			"image/png"
-		)
-			.split(";")[0]
-			.trim()
-			.toLowerCase();
+	pasteCatcher.contentEditable = "true";
+	pasteCatcher.tabIndex = -1;
+	pasteCatcher.setAttribute("inputmode", "none");
+	pasteCatcher.setAttribute("aria-hidden", "true");
+	pasteCatcher.setAttribute("autocapitalize", "off");
+	pasteCatcher.setAttribute("autocomplete", "off");
+	pasteCatcher.setAttribute("spellcheck", "false");
 
-		const extension =
-			SUPPORTED_IMAGE_TYPES.get(mimeType) ||
-			"png";
+	Object.assign(pasteCatcher.style, {
+		position: "fixed",
+		left: `${pasteButtonRect.left + pasteButtonRect.width / 2}px`,
+		top: `${pasteButtonRect.top + pasteButtonRect.height / 2}px`,
+		width: "2px",
+		height: "2px",
+		padding: "0",
+		margin: "0",
+		border: "0",
+		outline: "0",
+		opacity: "0.01",
+		overflow: "hidden",
+		color: "transparent",
+		caretColor: "transparent",
+		background: "transparent",
+		pointerEvents: "none",
+		zIndex: "2147483647",
+	});
 
-		return new File(
-			[blob],
-			`pasted-image.${extension}`,
-			{
-				type: mimeType,
-				lastModified: Date.now(),
-			},
+	document.body.append(pasteCatcher);
+
+	let completed = false;
+	let resolveCapturedPaste;
+
+	const capturedPaste = new Promise((resolve) => {
+		resolveCapturedPaste = resolve;
+	});
+
+	function cleanupPasteCatcher() {
+		window.setTimeout(() => {
+			pasteObserver.disconnect();
+			pasteCatcher.remove();
+		}, 0);
+	}
+
+	function completePaste() {
+		if (completed) {
+			return false;
+		}
+
+		completed = true;
+		resolveCapturedPaste(true);
+		cleanupPasteCatcher();
+		return true;
+	}
+
+	function extensionForMimeType(mimeType) {
+		return (
+			SUPPORTED_IMAGE_TYPES.get(
+				mimeType
+					.split(";")[0]
+					.trim()
+					.toLowerCase(),
+			) || "png"
 		);
 	}
 
-	async function loadImageBlob(blob, typeHint = "") {
+	async function loadBlobAsImage(
+		blob,
+		typeHint = "",
+	) {
 		const mimeType = (
 			blob.type ||
-			typeHint
+			typeHint ||
+			""
 		)
 			.split(";")[0]
 			.trim()
@@ -1070,14 +1106,27 @@ async function pasteImageFromClipboard() {
 			return false;
 		}
 
+		if (!completePaste()) {
+			return true;
+		}
+
 		await loadLocalImage(
-			fileFromBlob(blob, mimeType),
+			new File(
+				[blob],
+				`pasted-image.${extensionForMimeType(
+					mimeType,
+				)}`,
+				{
+					type: mimeType,
+					lastModified: Date.now(),
+				},
+			),
 		);
 
 		return true;
 	}
 
-	async function loadImageSource(rawSource) {
+	async function loadPastedSource(rawSource) {
 		const source = rawSource
 			?.trim()
 			.replace(/^["']+|["']+$/g, "");
@@ -1086,29 +1135,25 @@ async function pasteImageFromClipboard() {
 			return false;
 		}
 
-		if (source.startsWith("data:image/")) {
-			await loadLocalImage(
-				await dataUrlToFile(source),
-			);
-			return true;
-		}
-
-		if (source.startsWith("blob:")) {
+		if (
+			source.startsWith("data:image/") ||
+			source.startsWith("blob:")
+		) {
 			try {
 				const response = await fetch(source);
 				const blob = await response.blob();
 
-				if (await loadImageBlob(blob)) {
-					return true;
-				}
+				return loadBlobAsImage(blob);
 			} catch {
 				return false;
 			}
-
-			return false;
 		}
 
 		if (/^https?:\/\//i.test(source)) {
+			if (!completePaste()) {
+				return true;
+			}
+
 			loadImageUrl(source);
 			return true;
 		}
@@ -1116,191 +1161,323 @@ async function pasteImageFromClipboard() {
 		return false;
 	}
 
-	async function loadHtmlClipboard(html) {
+	async function inspectHtml(html) {
 		if (!html?.trim()) {
 			return false;
 		}
 
-		const parsedDocument =
+		const parsed =
 			new DOMParser().parseFromString(
 				html,
 				"text/html",
 			);
 
-		const sources = [
-			...parsedDocument.querySelectorAll(
+		const imageSources = [
+			...parsed.querySelectorAll(
 				"img[src], source[src], source[srcset]",
 			),
-		]
-			.flatMap((element) => {
-				const values = [];
+		].flatMap((element) => {
+			const sources = [];
+			const src = element.getAttribute("src");
+			const srcset =
+				element.getAttribute("srcset");
 
-				const src = element.getAttribute("src");
+			if (src) {
+				sources.push(src);
+			}
 
-				if (src) {
-					values.push(src);
-				}
+			if (srcset) {
+				sources.push(
+					...srcset
+						.split(",")
+						.map((candidate) =>
+							candidate
+								.trim()
+								.split(/\s+/)[0],
+						),
+				);
+			}
 
-				const srcset =
-					element.getAttribute("srcset");
+			return sources;
+		});
 
-				if (srcset) {
-					values.push(
-						...srcset
-							.split(",")
-							.map((candidate) =>
-								candidate
-									.trim()
-									.split(/\s+/)[0],
-							),
-					);
-				}
-
-				return values;
-			});
-
-		for (const source of sources) {
-			if (await loadImageSource(source)) {
+		for (const source of imageSources) {
+			if (await loadPastedSource(source)) {
 				return true;
 			}
 		}
 
-		const plainText =
-			parsedDocument.body?.textContent?.trim();
-
-		return loadImageSource(plainText);
+		return loadPastedSource(
+			parsed.body?.textContent || "",
+		);
 	}
+
+	async function inspectDataTransfer(dataTransfer) {
+		if (!dataTransfer) {
+			return false;
+		}
+
+		const files = [
+			...(dataTransfer.files || []),
+		];
+
+		for (const file of files) {
+			if (
+				file.type.startsWith("image/") &&
+				await loadBlobAsImage(file, file.type)
+			) {
+				return true;
+			}
+		}
+
+		const items = [
+			...(dataTransfer.items || []),
+		];
+
+		for (const item of items) {
+			if (!item.type.startsWith("image/")) {
+				continue;
+			}
+
+			const file = item.getAsFile();
+
+			if (
+				file &&
+				await loadBlobAsImage(file, item.type)
+			) {
+				return true;
+			}
+		}
+
+		const html =
+			dataTransfer.getData?.("text/html");
+
+		if (html && await inspectHtml(html)) {
+			return true;
+		}
+
+		const text =
+			dataTransfer.getData?.("text/uri-list") ||
+			dataTransfer.getData?.("text/plain");
+
+		return loadPastedSource(text);
+	}
+
+	async function inspectInsertedContent() {
+		if (completed) {
+			return true;
+		}
+
+		const imageSource =
+			pasteCatcher.querySelector("img")
+				?.getAttribute("src");
+
+		if (await loadPastedSource(imageSource)) {
+			return true;
+		}
+
+		const html = pasteCatcher.innerHTML;
+
+		if (
+			html &&
+			html !== "<br>" &&
+			await inspectHtml(html)
+		) {
+			return true;
+		}
+
+		return loadPastedSource(
+			pasteCatcher.textContent || "",
+		);
+	}
+
+	pasteCatcher.addEventListener(
+		"paste",
+		(event) => {
+			event.stopImmediatePropagation();
+
+			void inspectDataTransfer(
+				event.clipboardData,
+			).then((loaded) => {
+				if (loaded) {
+					event.preventDefault();
+					return;
+				}
+
+				window.setTimeout(
+					() => {
+						void inspectInsertedContent();
+					},
+					0,
+				);
+			});
+		},
+		true,
+	);
+
+	pasteCatcher.addEventListener(
+		"beforeinput",
+		(event) => {
+			if (
+				event.inputType !== "insertFromPaste"
+			) {
+				return;
+			}
+
+			event.stopImmediatePropagation();
+
+			void inspectDataTransfer(
+				event.dataTransfer,
+			).then((loaded) => {
+				if (loaded) {
+					event.preventDefault();
+					return;
+				}
+
+				window.setTimeout(
+					() => {
+						void inspectInsertedContent();
+					},
+					0,
+				);
+			});
+		},
+		true,
+	);
+
+	pasteCatcher.addEventListener(
+		"input",
+		() => {
+			window.setTimeout(
+				() => {
+					void inspectInsertedContent();
+				},
+				0,
+			);
+		},
+	);
+
+	const pasteObserver = new MutationObserver(() => {
+		window.setTimeout(
+			() => {
+				void inspectInsertedContent();
+			},
+			0,
+		);
+	});
+
+	pasteObserver.observe(
+		pasteCatcher,
+		{
+			childList: true,
+			subtree: true,
+			characterData: true,
+			attributes: true,
+			attributeFilter: ["src", "srcset"],
+		},
+	);
+
+	pasteCatcher.focus({
+		preventScroll: true,
+	});
+
+	try {
+		const selection = window.getSelection();
+		const range = document.createRange();
+
+		range.selectNodeContents(pasteCatcher);
+		range.collapse(false);
+
+		selection.removeAllRanges();
+		selection.addRange(range);
+	} catch {
+		// Focus is enough if Safari rejects selection manipulation.
+	}
+
+	const observedTypes = new Set();
 
 	try {
 		/*
-		 * Safari displays its small native Paste bubble for this
-		 * user-initiated clipboard read.
+		 * Safari shows its small native Paste callout for this read.
+		 * If ClipboardItem[] is empty, the focused hidden editable target
+		 * still gives WebKit a place to insert the pasted image as a file,
+		 * DataTransfer item, or blob-backed <img>.
 		 */
 		const clipboardItems =
 			await navigator.clipboard.read();
 
 		for (const clipboardItem of clipboardItems) {
 			const itemTypes =
-				Array.from(clipboardItem.types || []);
+				Array.from(
+					clipboardItem.types || [],
+				);
 
 			for (const type of itemTypes) {
 				observedTypes.add(type);
 			}
 
-			/*
-			 * First use any image type Safari explicitly reports.
-			 */
 			for (const type of itemTypes) {
-				if (!type.startsWith("image/")) {
-					continue;
-				}
-
 				try {
 					const blob =
 						await clipboardItem.getType(type);
 
 					if (
-						await loadImageBlob(blob, type)
-					) {
-						return;
-					}
-				} catch {
-					// Try the remaining clipboard formats.
-				}
-			}
-
-			/*
-			 * Some Safari clipboard payloads do not list the image type
-			 * consistently, so probe the common image formats directly.
-			 */
-			for (const type of imageMimeTypes) {
-				if (itemTypes.includes(type)) {
-					continue;
-				}
-
-				try {
-					const blob =
-						await clipboardItem.getType(type);
-
-					if (
-						await loadImageBlob(blob, type)
-					) {
-						return;
-					}
-				} catch {
-					// This image type was not present.
-				}
-			}
-
-			/*
-			 * Long-pressing Copy Image in Safari can expose HTML containing
-			 * an <img> instead of exposing an image blob.
-			 */
-			if (itemTypes.includes("text/html")) {
-				try {
-					const htmlBlob =
-						await clipboardItem.getType(
-							"text/html",
-						);
-
-					if (
-						await loadHtmlClipboard(
-							await htmlBlob.text(),
+						await loadBlobAsImage(
+							blob,
+							type,
 						)
 					) {
 						return;
 					}
-				} catch {
-					// Continue through URI and plain-text formats.
-				}
-			}
 
-			for (const type of [
-				"text/uri-list",
-				"text/plain",
-			]) {
-				if (!itemTypes.includes(type)) {
-					continue;
-				}
-
-				try {
-					const textBlob =
-						await clipboardItem.getType(type);
-
-					const text =
-						(await textBlob.text()).trim();
-
-					if (await loadImageSource(text)) {
-						return;
+					if (type === "text/html") {
+						if (
+							await inspectHtml(
+								await blob.text(),
+							)
+						) {
+							return;
+						}
 					}
 
 					if (
-						text.includes("<img") &&
-						await loadHtmlClipboard(text)
+						type === "text/plain" ||
+						type === "text/uri-list"
 					) {
-						return;
+						if (
+							await loadPastedSource(
+								await blob.text(),
+							)
+						) {
+							return;
+						}
 					}
 				} catch {
-					// Continue through remaining clipboard entries.
+					// Continue through other clipboard formats.
 				}
 			}
+		}
 
-			/*
-			 * Last pass: Safari may expose a generic blob whose own MIME
-			 * type is more useful than ClipboardItem.types.
-			 */
-			for (const type of itemTypes) {
-				try {
-					const blob =
-						await clipboardItem.getType(type);
+		/*
+		 * On affected iOS Safari builds, read() resolves with an empty array.
+		 * Give the real paste event/default DOM insertion time to arrive.
+		 */
+		const inserted = await Promise.race([
+			capturedPaste,
+			new Promise((resolve) => {
+				window.setTimeout(
+					() => resolve(false),
+					1200,
+				);
+			}),
+		]);
 
-					if (await loadImageBlob(blob, type)) {
-						return;
-					}
-				} catch {
-					// Nothing usable in this entry.
-				}
-			}
+		if (inserted || completed) {
+			return;
+		}
+
+		if (await inspectInsertedContent()) {
+			return;
 		}
 
 		const formats =
@@ -1308,16 +1485,20 @@ async function pasteImageFromClipboard() {
 			"none reported";
 
 		setStatus(
-			`Safari returned clipboard formats RISE could not read: ${formats}`,
+			`Safari granted paste access but exposed no usable image data (${formats}).`,
 			"error",
 		);
+
+		cleanupPasteCatcher();
 	} catch (error) {
+		cleanupPasteCatcher();
+
 		if (
 			error instanceof DOMException &&
 			error.name === "NotAllowedError"
 		) {
 			setStatus(
-				"Paste was cancelled or blocked by the browser.",
+				"Paste was cancelled or blocked by Safari.",
 				"error",
 			);
 			return;
