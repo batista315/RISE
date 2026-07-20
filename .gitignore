@@ -1,0 +1,22 @@
+﻿# Dependencies
+**/node_modules/
+
+# Generated output
+**/dist/
+**/.vite/
+**/.cache/
+**/.wrangler/
+
+# Private environment files and secrets
+**/.dev.vars
+**/.dev.vars.*
+**/.env
+**/.env.*
+!**/.env.example
+
+# Editor and operating-system files
+**/.vscode/
+**/.idea/
+**/.DS_Store
+**/Thumbs.db
+**/desktop.ini

@@ -1,0 +1,280 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+	<meta charset="utf-8">
+	<meta
+		name="viewport"
+		content="width=device-width, initial-scale=1, viewport-fit=cover"
+	>
+	<meta name="color-scheme" content="dark light">
+	<meta name="theme-color" content="#0b1018">
+
+	<title>RISE — Reverse Image Search Engines</title>
+
+	<link rel="stylesheet" href="styles.css">
+	<script src="app.js" defer></script>
+</head>
+
+<body>
+	<header class="site-header">
+		<a class="brand" href="./" aria-label="RISE home">RISE</a>
+
+		<button
+			id="theme-toggle"
+			class="icon-button"
+			type="button"
+			aria-label="Switch to light mode"
+			title="Toggle theme"
+		>
+			<svg
+				class="theme-icon theme-icon-sun"
+				viewBox="0 0 24 24"
+				aria-hidden="true"
+			>
+				<circle cx="12" cy="12" r="4"></circle>
+				<path d="M12 2v2"></path>
+				<path d="M12 20v2"></path>
+				<path d="m4.93 4.93 1.42 1.42"></path>
+				<path d="m17.66 17.66 1.41 1.41"></path>
+				<path d="M2 12h2"></path>
+				<path d="M20 12h2"></path>
+				<path d="m6.34 17.66-1.41 1.41"></path>
+				<path d="m19.07 4.93-1.41 1.42"></path>
+			</svg>
+
+			<svg
+				class="theme-icon theme-icon-moon"
+				viewBox="0 0 24 24"
+				aria-hidden="true"
+			>
+				<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79Z"></path>
+			</svg>
+		</button>
+	</header>
+
+	<main class="page-shell">
+		<h1>Reverse Image Search Engines</h1>
+
+		<section class="upload-card" aria-labelledby="upload-heading">
+			<h2 id="upload-heading" class="visually-hidden">
+				Choose an image
+			</h2>
+
+			<div id="empty-state" class="upload-state">
+				<div
+					id="drop-zone"
+					class="drop-zone"
+					tabindex="0"
+					role="button"
+					aria-label="Upload an image or drag and drop an image here"
+				>
+					<svg
+						class="upload-icon"
+						viewBox="0 0 24 24"
+						aria-hidden="true"
+					>
+						<path d="M12 16V4"></path>
+						<path d="m7 9 5-5 5 5"></path>
+						<path d="M5 20h14"></path>
+					</svg>
+
+					<p class="drop-title">Drag &amp; drop a file here, or</p>
+
+					<div class="upload-actions">
+						<button
+							id="upload-button"
+							class="button button-secondary"
+							type="button"
+						>
+							Upload Image
+						</button>
+
+						<button
+							id="paste-image-button"
+							class="button button-secondary"
+							type="button"
+						>
+							Paste Image
+						</button>
+					</div>
+				</div>
+
+				<input
+					id="file-input"
+					type="file"
+					accept="image/jpeg,image/png,image/webp,image/gif,image/avif,image/heic,image/heif,image/bmp,image/tiff"
+					hidden
+				>
+
+				<form id="url-form" class="url-form">
+					<label class="visually-hidden" for="image-url">
+						Paste image URL
+					</label>
+
+					<input
+						id="image-url"
+						name="image-url"
+						type="url"
+						inputmode="url"
+						autocomplete="off"
+						placeholder="Paste image URL"
+					>
+
+					<button
+						class="url-submit"
+						type="submit"
+						aria-label="Load image from URL"
+						title="Load image"
+					>
+						<svg viewBox="0 0 24 24" aria-hidden="true">
+							<path d="M5 12h14"></path>
+							<path d="m13 6 6 6-6 6"></path>
+						</svg>
+					</button>
+				</form>
+
+				<p class="file-help">
+					JPG, PNG, WebP, GIF, AVIF, HEIC, HEIF, BMP and TIFF
+					<span aria-hidden="true">·</span>
+					Maximum 95 MB
+				</p>
+			</div>
+
+			<div id="loaded-state" class="loaded-state" hidden>
+				<div class="preview-frame">
+					<img id="image-preview" alt="Selected image preview">
+				</div>
+
+				<div class="loaded-actions">
+					<button
+						id="show-results-button"
+						class="button button-primary loaded-button"
+						type="button"
+					>
+						Show Results
+					</button>
+
+					<button
+						id="reset-button"
+						class="button button-reset loaded-button"
+						type="button"
+					>
+						Search New Image
+					</button>
+				</div>
+			</div>
+
+			<p id="status-message" class="status-message" aria-live="polite"></p>
+		</section>
+
+		<section class="engine-section" aria-labelledby="engine-heading">
+			<label id="engine-heading" for="engine-select">
+				Search engine
+			</label>
+
+			<select id="engine-select">
+				<optgroup label="General">
+					<option value="google" selected>Google</option>
+					<option value="kagi">Kagi</option>
+					<option value="bing">Bing</option>
+					<option value="yandex">Yandex</option>
+					<option value="baidu">Baidu</option>
+					<option value="tineye">TinEye</option>
+					<option value="imgops">ImgOps</option>
+				</optgroup>
+
+				<optgroup label="Anime / Art / Idols / JAV">
+					<option value="saucenao">SauceNAO</option>
+					<option value="trace-moe">trace.moe</option>
+					<option value="iqdb">IQDB</option>
+					<option value="iqdb-3d">3D IQDB</option>
+					<option value="iqdb-idol">Idol Complex</option>
+					<option value="ascii2d">ascii2d</option>
+					<option value="artresearch">ArtResearch.net</option>
+				</optgroup>
+
+				<optgroup label="AI / Similarity">
+					<option value="lenso">lenso.ai</option>
+					<option value="same-energy">Same Energy</option>
+					<option value="lexica">Lexica</option>
+				</optgroup>
+			</select>
+		</section>
+
+		<section class="quick-section" aria-labelledby="quick-heading">
+			<h2 id="quick-heading">Quick Search</h2>
+
+			<div id="quick-carousel" class="quick-carousel">
+				<button class="engine-chip" type="button" data-engine="google">
+					Google
+				</button>
+
+				<button class="engine-chip" type="button" data-engine="kagi">
+					Kagi
+				</button>
+
+				<button class="engine-chip" type="button" data-engine="bing">
+					Bing
+				</button>
+
+				<button class="engine-chip" type="button" data-engine="yandex">
+					Yandex
+				</button>
+
+				<button class="engine-chip" type="button" data-engine="baidu">
+					Baidu
+				</button>
+
+				<button class="engine-chip" type="button" data-engine="tineye">
+					TinEye
+				</button>
+
+				<button class="engine-chip" type="button" data-engine="imgops">
+					ImgOps
+				</button>
+
+				<button class="engine-chip" type="button" data-engine="saucenao">
+					SauceNAO
+				</button>
+
+				<button class="engine-chip" type="button" data-engine="trace-moe">
+					trace.moe
+				</button>
+
+				<button class="engine-chip" type="button" data-engine="iqdb">
+					IQDB
+				</button>
+
+				<button class="engine-chip" type="button" data-engine="iqdb-3d">
+					3D IQDB
+				</button>
+
+				<button class="engine-chip" type="button" data-engine="iqdb-idol">
+					Idol Complex
+				</button>
+
+				<button class="engine-chip" type="button" data-engine="ascii2d">
+					ascii2d
+				</button>
+
+				<button class="engine-chip" type="button" data-engine="artresearch">
+					ArtResearch.net
+				</button>
+
+				<button class="engine-chip" type="button" data-engine="lenso">
+					lenso.ai
+				</button>
+
+				<button class="engine-chip" type="button" data-engine="same-energy">
+					Same Energy
+				</button>
+
+
+				<button class="engine-chip" type="button" data-engine="lexica">
+					Lexica
+				</button>
+			</div>
+		</section>
+	</main>
+</body>
+</html>
