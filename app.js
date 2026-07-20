@@ -252,9 +252,6 @@ const state = {
 	resetArmed: false,
 	resetTimer: null,
 
-	pasteFallbackOpen: false,
-	pasteOverlay: null,
-	pasteTarget: null,
 };
 
 function safeStorageGet(storage, key) {
@@ -491,7 +488,6 @@ function resetResetButton() {
 function clearCurrentImage() {
 	revokePreviewUrl();
 	resetResetButton();
-	closePasteFallback();
 
 	state.file = null;
 	state.mimeType = null;
@@ -966,160 +962,6 @@ function openEngine(engineId) {
 	);
 }
 
-function ensurePasteFallback() {
-	if (state.pasteOverlay) {
-		return;
-	}
-
-	const style = document.createElement("style");
-	style.id = "rise-paste-fallback-styles";
-	style.textContent = `
-		.rise-paste-overlay {
-			position: fixed;
-			inset: 0;
-			z-index: 1000;
-			display: grid;
-			place-items: center;
-			padding: 20px;
-			background: rgba(0, 0, 0, 0.72);
-			backdrop-filter: blur(8px);
-			-webkit-backdrop-filter: blur(8px);
-		}
-
-		.rise-paste-dialog {
-			width: min(100%, 460px);
-			padding: 22px;
-			border: 1px solid var(--card-border);
-			border-radius: 20px;
-			background: var(--card-bg);
-			box-shadow: var(--shadow-card);
-		}
-
-		.rise-paste-dialog h2 {
-			margin: 0 0 8px;
-			font-size: 1.25rem;
-			letter-spacing: -0.02em;
-		}
-
-		.rise-paste-dialog p {
-			margin: 0 0 16px;
-			color: var(--text-muted);
-			line-height: 1.5;
-		}
-
-		.rise-paste-target {
-			display: grid;
-			min-height: 150px;
-			padding: 20px;
-			place-items: center;
-			border: 1.5px dashed var(--card-border-strong);
-			border-radius: 16px;
-			outline: none;
-			background: var(--field-bg);
-			color: var(--text-muted);
-			text-align: center;
-			-webkit-user-select: text;
-			user-select: text;
-		}
-
-		.rise-paste-target:focus {
-			border-color: var(--accent);
-			box-shadow: 0 0 0 4px var(--focus-ring);
-		}
-
-		.rise-paste-cancel {
-			width: 100%;
-			margin-top: 14px;
-			min-height: 46px;
-			border: 1px solid var(--card-border-strong);
-			border-radius: 12px;
-			background: transparent;
-			color: var(--text-main);
-			font-weight: 700;
-		}
-	`;
-
-	document.head.append(style);
-
-	const overlay = document.createElement("div");
-	overlay.className = "rise-paste-overlay";
-	overlay.hidden = true;
-
-	const dialog = document.createElement("section");
-	dialog.className = "rise-paste-dialog";
-	dialog.setAttribute("role", "dialog");
-	dialog.setAttribute("aria-modal", "true");
-	dialog.setAttribute("aria-labelledby", "rise-paste-title");
-
-	const title = document.createElement("h2");
-	title.id = "rise-paste-title";
-	title.textContent = "Paste Image";
-
-	const instructions = document.createElement("p");
-	instructions.textContent =
-		"Desktop: press Ctrl+V. iPhone or iPad: touch and hold inside the box, then choose Paste.";
-
-	const target = document.createElement("div");
-	target.className = "rise-paste-target";
-	target.contentEditable = "true";
-	target.setAttribute("role", "textbox");
-	target.setAttribute("aria-label", "Paste an image here");
-	target.setAttribute("inputmode", "none");
-	target.textContent = "Paste the image here";
-
-	const cancel = document.createElement("button");
-	cancel.className = "rise-paste-cancel";
-	cancel.type = "button";
-	cancel.textContent = "Cancel";
-
-	dialog.append(title, instructions, target, cancel);
-	overlay.append(dialog);
-	document.body.append(overlay);
-
-	cancel.addEventListener("click", closePasteFallback);
-
-	overlay.addEventListener("click", (event) => {
-		if (event.target === overlay) {
-			closePasteFallback();
-		}
-	});
-
-	target.addEventListener("beforeinput", (event) => {
-		if (event.inputType === "insertText") {
-			event.preventDefault();
-		}
-	});
-
-	state.pasteOverlay = overlay;
-	state.pasteTarget = target;
-}
-
-function openPasteFallback() {
-	ensurePasteFallback();
-
-	state.pasteFallbackOpen = true;
-	state.pasteOverlay.hidden = false;
-	state.pasteTarget.textContent = "Paste the image here";
-
-	window.setTimeout(() => {
-		state.pasteTarget.focus();
-	}, 0);
-
-	setStatus(
-		"Use the native Paste command inside the paste box.",
-	);
-}
-
-function closePasteFallback() {
-	if (!state.pasteOverlay) {
-		return;
-	}
-
-	state.pasteFallbackOpen = false;
-	state.pasteOverlay.hidden = true;
-	state.pasteTarget.textContent = "Paste the image here";
-}
-
 async function dataUrlToFile(dataUrl) {
 	const response = await fetch(dataUrl);
 	const blob = await response.blob();
@@ -1155,7 +997,6 @@ async function loadClipboardTextUrl(rawText) {
 			return false;
 		}
 
-		closePasteFallback();
 		loadImageUrl(parsedUrl.href);
 		return true;
 	} catch {
@@ -1168,18 +1009,27 @@ async function pasteImageFromClipboard() {
 		!navigator.clipboard ||
 		typeof navigator.clipboard.read !== "function"
 	) {
-		openPasteFallback();
+		setStatus(
+			"Direct image paste is not available in this browser. Use Upload Image instead.",
+			"error",
+		);
 		return;
 	}
 
 	try {
+		/*
+		 * This call is made directly from the Paste Image button click.
+		 * Safari displays its small native â€œPasteâ€ bubble; RISE does not
+		 * create any dialog, overlay, or editable paste box.
+		 */
 		const clipboardItems =
 			await navigator.clipboard.read();
 
 		for (const clipboardItem of clipboardItems) {
-			const imageType = clipboardItem.types.find(
-				(type) => type.startsWith("image/"),
-			);
+			const imageType =
+				clipboardItem.types.find(
+					(type) => type.startsWith("image/"),
+				);
 
 			if (imageType) {
 				const blob =
@@ -1198,16 +1048,16 @@ async function pasteImageFromClipboard() {
 					},
 				);
 
-				closePasteFallback();
 				await loadLocalImage(pastedFile);
 				return;
 			}
 
-			const textType = clipboardItem.types.find(
-				(type) =>
-					type === "text/uri-list" ||
-					type === "text/plain",
-			);
+			const textType =
+				clipboardItem.types.find(
+					(type) =>
+						type === "text/uri-list" ||
+						type === "text/plain",
+				);
 
 			if (textType) {
 				const blob =
@@ -1223,28 +1073,26 @@ async function pasteImageFromClipboard() {
 			}
 		}
 
-		openPasteFallback();
 		setStatus(
-			"The clipboard did not expose an image. Use the native Paste command in the box.",
+			"The clipboard did not contain an image or image URL.",
 			"error",
 		);
 	} catch (error) {
-		openPasteFallback();
-
 		if (
 			error instanceof DOMException &&
 			error.name === "NotAllowedError"
 		) {
 			setStatus(
-				"Your browser blocked automatic clipboard reading. Use the native Paste command in the box.",
+				"Paste was cancelled or blocked by the browser.",
 				"error",
 			);
-
 			return;
 		}
 
 		setStatus(
-			"Automatic clipboard reading was blocked. Use the native Paste command in the box.",
+			error instanceof Error
+				? error.message
+				: "The pasted image could not be read.",
 			"error",
 		);
 	}
@@ -1264,7 +1112,6 @@ function handlePastedData(event) {
 
 	if (imageFile) {
 		event.preventDefault();
-		closePasteFallback();
 		void loadLocalImage(imageFile);
 		return;
 	}
@@ -1281,7 +1128,6 @@ function handlePastedData(event) {
 
 		if (file) {
 			event.preventDefault();
-			closePasteFallback();
 			void loadLocalImage(file);
 			return;
 		}
@@ -1313,7 +1159,6 @@ function handlePastedData(event) {
 
 			void dataUrlToFile(imageSource)
 				.then((file) => {
-					closePasteFallback();
 					return loadLocalImage(file);
 				})
 				.catch(() => {
@@ -1360,14 +1205,6 @@ function handlePastedData(event) {
 	);
 }
 
-document.addEventListener("keydown", (event) => {
-	if (
-		event.key === "Escape" &&
-		state.pasteFallbackOpen
-	) {
-		closePasteFallback();
-	}
-});
 
 elements.themeToggle.addEventListener("click", () => {
 	const nextTheme =
