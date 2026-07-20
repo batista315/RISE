@@ -7,14 +7,13 @@
 
 	/*
 	 * Leave the private #token behavior entirely to app.js.
-	 * This file deliberately does not read, restore, or modify the URL hash.
+	 * This file does not read, restore, or modify the URL hash.
 	 */
 
 	/*
-	 * iOS Safari is substantially more reliable when a direct result URL is
-	 * opened through a real target=_blank link instead of window.open(url).
-	 * Blank/named windows used by worker searches and file POST engines still
-	 * use the original window.open implementation.
+	 * Direct result URLs open more reliably in iOS Safari through a real
+	 * target=_blank link. Blank/named windows used by worker searches and
+	 * file POST engines still use the browser's original window.open().
 	 */
 	const nativeWindowOpen = window.open.bind(window);
 
@@ -44,18 +43,13 @@
 		return nativeWindowOpen(url, target, features);
 	};
 
-	function installMobileInteractionFixes() {
+	function installMobileFixes() {
 		const style = document.createElement("style");
 
 		style.textContent = `
-			html {
-				scrollbar-gutter: stable;
-			}
-
 			button,
 			[role="button"],
-			.engine-chip,
-			.rise-native-paste-target {
+			.engine-chip {
 				touch-action: manipulation;
 			}
 
@@ -63,94 +57,19 @@
 				-webkit-user-select: none;
 				user-select: none;
 			}
-
-			.rise-native-paste-overlay {
-				position: fixed;
-				inset: 0;
-				z-index: 2000;
-				display: grid;
-				place-items: center;
-				padding:
-					max(18px, env(safe-area-inset-top))
-					18px
-					max(18px, env(safe-area-inset-bottom));
-				background: rgba(0, 0, 0, 0.76);
-				backdrop-filter: blur(9px);
-				-webkit-backdrop-filter: blur(9px);
-			}
-
-			.rise-native-paste-overlay[hidden] {
-				display: none !important;
-			}
-
-			.rise-native-paste-dialog {
-				width: min(100%, 460px);
-				padding: 20px;
-				border: 1px solid var(--card-border);
-				border-radius: 20px;
-				background: var(--card-bg);
-				box-shadow: var(--shadow-card);
-			}
-
-			.rise-native-paste-title {
-				margin: 0 0 8px;
-				font-size: 1.22rem;
-				letter-spacing: -0.02em;
-			}
-
-			.rise-native-paste-copy {
-				margin: 0 0 14px;
-				color: var(--text-muted);
-				line-height: 1.45;
-			}
-
-			.rise-native-paste-target {
-				display: grid;
-				min-height: 170px;
-				padding: 22px;
-				place-items: center;
-				border: 1.5px dashed var(--card-border-strong);
-				border-radius: 16px;
-				outline: none;
-				background: var(--field-bg);
-				color: var(--text-muted);
-				text-align: center;
-				-webkit-user-select: text;
-				user-select: text;
-			}
-
-			.rise-native-paste-target:focus {
-				border-color: var(--accent);
-				box-shadow: 0 0 0 4px var(--focus-ring);
-			}
-
-			.rise-native-paste-target img {
-				display: block;
-				max-width: 100%;
-				max-height: 150px;
-				object-fit: contain;
-			}
-
-			.rise-native-paste-cancel {
-				width: 100%;
-				min-height: 48px;
-				margin-top: 14px;
-				border: 1px solid var(--card-border-strong);
-				border-radius: 12px;
-				background: transparent;
-				color: var(--text-main);
-				font: inherit;
-				font-weight: 700;
-			}
 		`;
 
 		document.head.append(style);
 
-		const resetButton = document.querySelector("#reset-button");
+		const resetButton =
+			document.querySelector("#reset-button");
 
-		resetButton?.addEventListener("dblclick", (event) => {
-			event.preventDefault();
-		});
+		resetButton?.addEventListener(
+			"dblclick",
+			(event) => {
+				event.preventDefault();
+			},
+		);
 
 		if (!isTouchDevice) {
 			return;
@@ -160,79 +79,20 @@
 			document.querySelector("#paste-image-button");
 		const fileInput =
 			document.querySelector("#file-input");
-		const urlForm =
-			document.querySelector("#url-form");
 		const imageUrlInput =
 			document.querySelector("#image-url");
+		const urlForm =
+			document.querySelector("#url-form");
 		const statusMessage =
 			document.querySelector("#status-message");
 
 		if (
 			!pasteButton ||
 			!fileInput ||
-			!urlForm ||
-			!imageUrlInput
+			!imageUrlInput ||
+			!urlForm
 		) {
 			return;
-		}
-
-		const overlay = document.createElement("div");
-		overlay.className = "rise-native-paste-overlay";
-		overlay.hidden = true;
-
-		const dialog = document.createElement("section");
-		dialog.className = "rise-native-paste-dialog";
-		dialog.setAttribute("role", "dialog");
-		dialog.setAttribute("aria-modal", "true");
-		dialog.setAttribute(
-			"aria-labelledby",
-			"rise-native-paste-title",
-		);
-
-		const title = document.createElement("h2");
-		title.id = "rise-native-paste-title";
-		title.className = "rise-native-paste-title";
-		title.textContent = "Paste Image";
-
-		const instructions = document.createElement("p");
-		instructions.className = "rise-native-paste-copy";
-		instructions.textContent =
-			"Touch and hold inside the box, then choose Paste.";
-
-		const target = document.createElement("div");
-		target.className = "rise-native-paste-target";
-		target.contentEditable = "true";
-		target.setAttribute("role", "textbox");
-		target.setAttribute(
-			"aria-label",
-			"Paste an image here",
-		);
-		target.setAttribute("autocapitalize", "off");
-		target.setAttribute("autocomplete", "off");
-		target.setAttribute("spellcheck", "false");
-
-		const cancel = document.createElement("button");
-		cancel.type = "button";
-		cancel.className = "rise-native-paste-cancel";
-		cancel.textContent = "Cancel";
-
-		dialog.append(
-			title,
-			instructions,
-			target,
-			cancel,
-		);
-		overlay.append(dialog);
-		document.body.append(overlay);
-
-		let pasteHandling = false;
-
-		function resetTarget() {
-			target.replaceChildren(
-				document.createTextNode(
-					"Touch and hold here, then tap Paste",
-				),
-			);
 		}
 
 		function setLocalStatus(message, type = "") {
@@ -249,69 +109,15 @@
 			if (type === "error") {
 				statusMessage.classList.add("is-error");
 			}
-		}
 
-		function closeOverlay() {
-			overlay.hidden = true;
-			pasteHandling = false;
-			resetTarget();
-		}
-
-		function openOverlay(event) {
-			event.preventDefault();
-			event.stopImmediatePropagation();
-
-			resetTarget();
-			overlay.hidden = false;
-
-			window.setTimeout(() => {
-				target.focus({ preventScroll: true });
-			}, 0);
-		}
-
-		function sendFileToApp(file) {
-			if (
-				typeof window.loadLocalImage === "function"
-			) {
-				void window.loadLocalImage(file);
-				return true;
+			if (type === "success") {
+				statusMessage.classList.add("is-success");
 			}
-
-			try {
-				const transfer = new DataTransfer();
-				transfer.items.add(file);
-				fileInput.files = transfer.files;
-				fileInput.dispatchEvent(
-					new Event("change", {
-						bubbles: true,
-					}),
-				);
-				return true;
-			} catch {
-				return false;
-			}
-		}
-
-		function sendUrlToApp(url) {
-			if (
-				typeof window.loadImageUrl === "function"
-			) {
-				window.loadImageUrl(url);
-				return;
-			}
-
-			imageUrlInput.value = url;
-			urlForm.dispatchEvent(
-				new Event("submit", {
-					bubbles: true,
-					cancelable: true,
-				}),
-			);
 		}
 
 		function extensionForType(type) {
 			const normalized =
-				type?.split(";")[0].toLowerCase();
+				type?.split(";")[0].trim().toLowerCase();
 
 			const extensions = {
 				"image/jpeg": "jpg",
@@ -328,227 +134,190 @@
 			return extensions[normalized] || "png";
 		}
 
-		async function sourceToFile(source) {
-			const response = await fetch(source);
-			const blob = await response.blob();
-
-			if (!blob.type.startsWith("image/")) {
-				throw new Error(
-					"The pasted content was not an image.",
-				);
+		function sendFileToRise(file) {
+			if (
+				typeof window.loadLocalImage === "function"
+			) {
+				void window.loadLocalImage(file);
+				return true;
 			}
 
-			return new File(
-				[blob],
-				`pasted-image.${extensionForType(blob.type)}`,
-				{
-					type: blob.type,
-					lastModified: Date.now(),
-				},
-			);
-		}
+			try {
+				const transfer = new DataTransfer();
+				transfer.items.add(file);
+				fileInput.files = transfer.files;
 
-		async function acceptSource(source) {
-			if (!source) {
+				fileInput.dispatchEvent(
+					new Event("change", {
+						bubbles: true,
+					}),
+				);
+
+				return true;
+			} catch {
 				return false;
 			}
-
-			if (
-				source.startsWith("data:image/") ||
-				source.startsWith("blob:")
-			) {
-				const file = await sourceToFile(source);
-
-				if (!sendFileToApp(file)) {
-					throw new Error(
-						"The browser refused the pasted image.",
-					);
-				}
-
-				closeOverlay();
-				return true;
-			}
-
-			if (/^https?:\/\//i.test(source)) {
-				sendUrlToApp(source);
-				closeOverlay();
-				return true;
-			}
-
-			return false;
 		}
 
-		async function inspectInsertedContent() {
-			if (pasteHandling) {
+		function sendUrlToRise(url) {
+			if (
+				typeof window.loadImageUrl === "function"
+			) {
+				window.loadImageUrl(url);
 				return;
 			}
 
-			pasteHandling = true;
+			imageUrlInput.value = url;
+
+			urlForm.dispatchEvent(
+				new Event("submit", {
+					bubbles: true,
+					cancelable: true,
+				}),
+			);
+		}
+
+		async function handleNativePaste(event) {
+			event.preventDefault();
+			event.stopImmediatePropagation();
+
+			if (
+				!navigator.clipboard ||
+				typeof navigator.clipboard.read !==
+					"function"
+			) {
+				setLocalStatus(
+					"This browser does not support direct image paste. Use Upload Image instead.",
+					"error",
+				);
+				return;
+			}
 
 			try {
-				const imageSource =
-					target.querySelector("img")
-						?.getAttribute("src");
+				/*
+				 * On iOS Safari, this direct user-initiated read displays
+				 * the small native â€œPasteâ€ permission bubble above the
+				 * button. The image is returned only after the user taps it.
+				 */
+				const clipboardItems =
+					await navigator.clipboard.read();
 
-				if (await acceptSource(imageSource)) {
-					return;
-				}
+				for (
+					const clipboardItem of clipboardItems
+				) {
+					const imageType =
+						clipboardItem.types.find(
+							(type) =>
+								type.startsWith(
+									"image/",
+								),
+						);
 
-				const text =
-					target.textContent?.trim() || "";
+					if (imageType) {
+						const blob =
+							await clipboardItem.getType(
+								imageType,
+							);
 
-				if (await acceptSource(text)) {
-					return;
+						const pastedFile = new File(
+							[blob],
+							`pasted-image.${extensionForType(
+								imageType,
+							)}`,
+							{
+								type: imageType,
+								lastModified:
+									Date.now(),
+							},
+						);
+
+						if (
+							!sendFileToRise(
+								pastedFile,
+							)
+						) {
+							throw new Error(
+								"Safari returned the image, but RISE could not attach it.",
+							);
+						}
+
+						return;
+					}
+
+					const textType =
+						clipboardItem.types.find(
+							(type) =>
+								type ===
+									"text/uri-list" ||
+								type ===
+									"text/plain",
+						);
+
+					if (textType) {
+						const blob =
+							await clipboardItem.getType(
+								textType,
+							);
+
+						const text =
+							(await blob.text()).trim();
+
+						if (
+							/^https?:\/\//i.test(
+								text,
+							)
+						) {
+							sendUrlToRise(text);
+							return;
+						}
+					}
 				}
 
 				setLocalStatus(
-					"The pasted content was not an image or image URL.",
+					"The clipboard did not contain an image or image URL.",
 					"error",
 				);
-				resetTarget();
 			} catch (error) {
+				if (
+					error instanceof DOMException &&
+					error.name === "NotAllowedError"
+				) {
+					setLocalStatus(
+						"Paste was cancelled or blocked by Safari.",
+						"error",
+					);
+					return;
+				}
+
 				setLocalStatus(
 					error instanceof Error
 						? error.message
 						: "The pasted image could not be read.",
 					"error",
 				);
-				resetTarget();
-			} finally {
-				pasteHandling = false;
 			}
 		}
 
+		/*
+		 * Capture phase prevents app.js from opening its old editable
+		 * fallback after this native clipboard request.
+		 */
 		pasteButton.addEventListener(
 			"click",
-			openOverlay,
+			(event) => {
+				void handleNativePaste(event);
+			},
 			true,
 		);
-
-		cancel.addEventListener("click", closeOverlay);
-
-		overlay.addEventListener("click", (event) => {
-			if (event.target === overlay) {
-				closeOverlay();
-			}
-		});
-
-		target.addEventListener(
-			"touchend",
-			() => {
-				target.focus({ preventScroll: true });
-			},
-			{ passive: true },
-		);
-
-		target.addEventListener("paste", (event) => {
-			event.stopPropagation();
-
-			const clipboardData = event.clipboardData;
-
-			if (!clipboardData) {
-				window.setTimeout(
-					inspectInsertedContent,
-					0,
-				);
-				return;
-			}
-
-			const imageFile =
-				[...clipboardData.files].find((file) =>
-					file.type.startsWith("image/"),
-				);
-
-			if (imageFile && sendFileToApp(imageFile)) {
-				event.preventDefault();
-				closeOverlay();
-				return;
-			}
-
-			const imageItem =
-				[...clipboardData.items].find((item) =>
-					item.type.startsWith("image/"),
-				);
-
-			const itemFile = imageItem?.getAsFile();
-
-			if (itemFile && sendFileToApp(itemFile)) {
-				event.preventDefault();
-				closeOverlay();
-				return;
-			}
-
-			const html =
-				clipboardData.getData("text/html");
-
-			if (html) {
-				const parsed =
-					new DOMParser().parseFromString(
-						html,
-						"text/html",
-					);
-
-				const imageSource =
-					parsed.querySelector("img")
-						?.getAttribute("src");
-
-				if (imageSource) {
-					event.preventDefault();
-
-					void acceptSource(imageSource)
-						.catch((error) => {
-							setLocalStatus(
-								error.message,
-								"error",
-							);
-						});
-
-					return;
-				}
-			}
-
-			const text = (
-				clipboardData.getData(
-					"text/uri-list",
-				) ||
-				clipboardData.getData("text/plain")
-			).trim();
-
-			if (/^https?:\/\//i.test(text)) {
-				event.preventDefault();
-				sendUrlToApp(text);
-				closeOverlay();
-				return;
-			}
-
-			/*
-			 * Safari may insert the copied image into contenteditable
-			 * without exposing it through clipboardData. Let insertion
-			 * happen, then inspect the resulting <img> or text.
-			 */
-			window.setTimeout(
-				inspectInsertedContent,
-				0,
-			);
-		});
-
-		target.addEventListener("input", () => {
-			window.setTimeout(
-				inspectInsertedContent,
-				0,
-			);
-		});
-
-		resetTarget();
 	}
 
 	if (document.readyState === "loading") {
 		document.addEventListener(
 			"DOMContentLoaded",
-			installMobileInteractionFixes,
+			installMobileFixes,
 			{ once: true },
 		);
 	} else {
-		installMobileInteractionFixes();
+		installMobileFixes();
 	}
 })();
