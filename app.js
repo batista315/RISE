@@ -657,7 +657,18 @@ async function loadImageUrl(rawUrl) {
 		return false;
 	}
 
+	revokePreviewUrl();
+
+	state.file = null;
+	state.mimeType = null;
+	state.sourceUrl = null;
+	state.publicUrl = null;
 	state.isUploading = true;
+
+	elements.imagePreview.removeAttribute("src");
+	elements.loadedState.hidden = true;
+	elements.emptyState.hidden = false;
+
 	setActionsEnabled(false);
 
 	setStatus(
@@ -766,7 +777,7 @@ async function loadImageUrl(rawUrl) {
 
 		state.file = importedFile;
 		state.mimeType = mimeType;
-		state.sourceUrl = parsedUrl.href;
+		state.sourceUrl = null;
 		state.publicUrl = responseData.url;
 		state.previewUrl =
 			URL.createObjectURL(importedFile);
@@ -1856,17 +1867,6 @@ elements.urlForm.addEventListener(
 	},
 );
 
-elements.imagePreview.addEventListener(
-	"error",
-	() => {
-		if (state.sourceUrl) {
-			setStatus(
-				"The website blocked the preview, but RISE can still try searching the URL.",
-				"error",
-			);
-		}
-	},
-);
 
 elements.engineSelect.addEventListener(
 	"change",
