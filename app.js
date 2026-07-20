@@ -624,7 +624,8 @@ async function loadLocalImage(file) {
 	}
 }
 
-function loadImageUrl(rawUrl) {
+
+async function loadImageUrl(rawUrl) {
 	let parsedUrl;
 
 	try {
@@ -634,7 +635,7 @@ function loadImageUrl(rawUrl) {
 			"Enter a complete image URL beginning with http:// or https://.",
 			"error",
 		);
-		return;
+		return false;
 	}
 
 	if (
@@ -645,25 +646,154 @@ function loadImageUrl(rawUrl) {
 			"Only http:// and https:// image URLs are supported.",
 			"error",
 		);
-		return;
+		return false;
 	}
 
-	revokePreviewUrl();
+	if (!state.token) {
+		setStatus(
+			"RISE does not have your private upload token. Open RISE from your private bookmark.",
+			"error",
+		);
+		return false;
+	}
 
-	state.file = null;
-	state.mimeType = null;
-	state.sourceUrl = parsedUrl.href;
-	state.publicUrl = parsedUrl.href;
-	state.previewUrl = parsedUrl.href;
-	state.isUploading = false;
-
-	showLoadedState(parsedUrl.href);
-	setActionsEnabled(true);
+	state.isUploading = true;
+	setActionsEnabled(false);
 
 	setStatus(
-		"Image URL ready.",
-		"success",
+		"Importing the image into RISE storageâ€¦",
 	);
+
+	try {
+		const response = await fetch(
+			`${WORKER_BASE_URL}/import-url`,
+			{
+				method: "POST",
+
+				headers: {
+					Authorization:
+						`Bearer ${state.token}`,
+					"Content-Type":
+						"application/json",
+				},
+
+				body: JSON.stringify({
+					url: parsedUrl.href,
+				}),
+			},
+		);
+
+		const responseText = await response.text();
+
+		let responseData;
+
+		try {
+			responseData = JSON.parse(responseText);
+		} catch {
+			responseData = null;
+		}
+
+		if (!response.ok) {
+			if (response.status === 401) {
+				safeStorageRemove(
+					sessionStorage,
+					STORAGE_KEYS.token,
+				);
+
+				state.token = null;
+			}
+
+			throw new Error(
+				responseData?.error ||
+					`Image import failed with status ${response.status}.`,
+			);
+		}
+
+		if (
+			!responseData?.url ||
+			typeof responseData.url !== "string"
+		) {
+			throw new Error(
+				"RISE imported the image but did not return an image URL.",
+			);
+		}
+
+		const importedResponse = await fetch(
+			responseData.url,
+			{
+				cache: "no-store",
+			},
+		);
+
+		if (!importedResponse.ok) {
+			throw new Error(
+				"RISE saved the image, but the browser could not retrieve it.",
+			);
+		}
+
+		const blob = await importedResponse.blob();
+
+		const mimeType = (
+			responseData.contentType ||
+			blob.type ||
+			""
+		)
+			.split(";")[0]
+			.trim()
+			.toLowerCase();
+
+		const extension =
+			SUPPORTED_IMAGE_TYPES.get(mimeType);
+
+		if (!extension) {
+			throw new Error(
+				"The imported image type is not supported by RISE.",
+			);
+		}
+
+		const importedFile = new File(
+			[blob],
+			`imported-image.${extension}`,
+			{
+				type: mimeType,
+				lastModified: Date.now(),
+			},
+		);
+
+		validateFile(importedFile);
+
+		revokePreviewUrl();
+
+		state.file = importedFile;
+		state.mimeType = mimeType;
+		state.sourceUrl = parsedUrl.href;
+		state.publicUrl = responseData.url;
+		state.previewUrl =
+			URL.createObjectURL(importedFile);
+		state.isUploading = false;
+
+		showLoadedState(state.previewUrl);
+		setActionsEnabled(true);
+
+		setStatus(
+			"Image imported and ready. It will automatically expire from RISE storage.",
+			"success",
+		);
+
+		return true;
+	} catch (error) {
+		state.isUploading = false;
+		setActionsEnabled(false);
+
+		setStatus(
+			error instanceof Error
+				? error.message
+				: "The image URL could not be imported.",
+			"error",
+		);
+
+		return false;
+	}
 }
 
 function getCurrentSearchableUrl() {
@@ -997,8 +1127,7 @@ async function loadClipboardTextUrl(rawText) {
 			return false;
 		}
 
-		loadImageUrl(parsedUrl.href);
-		return true;
+		return await loadImageUrl(parsedUrl.href);
 	} catch {
 		return false;
 	}
@@ -1154,8 +1283,7 @@ async function pasteImageFromClipboard() {
 				return true;
 			}
 
-			loadImageUrl(source);
-			return true;
+			return await loadImageUrl(source);
 		}
 
 		return false;
